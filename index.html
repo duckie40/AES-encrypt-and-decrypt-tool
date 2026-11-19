@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AES-256 Encrypt &amp; Decrypt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;family=Atkinson+Hyperlegible+Next:wght@400;600;700&amp;family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&amp;display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: header band, then a bench: key panel pinned on the left, workspace and the byte-by-byte envelope map on the right, format notes underneath. */
+  --bg: #eceef1;
+  --surface: #ffffff;
+  --field: #f5f6f8;
+  --ink: #12161c;
+  --muted: #586170;
+  --line: #d3d8df;
+  --accent: #c4361a;
+  --accent-ink: #ffffff;
+  --ok: #1d7448;
+  --warn: #9a5800;
+  --bad: #b3261e;
+  --seg-hdr: #8d97a8;
+  --seg-kdf: #c48a10;
+  --seg-iv: #17867f;
+  --seg-ct: #3a4350;
+  --seg-tag: var(--accent);
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1115;
+    --surface: #161a20;
+    --field: #0f1318;
+    --ink: #e6e9ee;
+    --muted: #949daa;
+    --line: #2b323c;
+    --accent: #ff6b47;
+    --accent-ink: #1c0a04;
+    --ok: #52c78f;
+    --warn: #e3a440;
+    --bad: #ff7e75;
+    --seg-hdr: #6f7a8c;
+    --seg-kdf: #d9a434;
+    --seg-iv: #2cb5ac;
+    --seg-ct: #b8c0cb;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1115;
+  --surface: #161a20;
+  --field: #0f1318;
+  --ink: #e6e9ee;
+  --muted: #949daa;
+  --line: #2b323c;
+  --accent: #ff6b47;
+  --accent-ink: #1c0a04;
+  --ok: #52c78f;
+  --warn: #e3a440;
+  --bad: #ff7e75;
+  --seg-hdr: #6f7a8c;
+  --seg-kdf: #d9a434;
+  --seg-iv: #2cb5ac;
+  --seg-ct: #b8c0cb;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 16px/1.5 var(--font-body);
+}
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: max(16px, 3vw); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top { padding: 40px 0 28px; }
+h1 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(34px, 5.6vw, 62px);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  margin: 0;
+  text-wrap: balance;
+}
+h1 .bits { color: var(--accent); }
+.lede { max-width: 62ch; color: var(--muted); font-size: 17px; margin: 14px 0 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.chips li {
+  font: 600 12.5px/1 var(--font-mono);
+  letter-spacing: 0.02em;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bench */
+.bench {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  grid-template-areas: "key work" "key map" "spec spec";
+  gap: 20px;
+  padding-bottom: 28px;
+}
+.key-card { grid-area: key; align-self: start; position: sticky; top: 16px; }
+.work-card { grid-area: work; }
+.map-card { grid-area: map; }
+.spec-card { grid-area: spec; }
+@media (max-width: 860px) {
+  .bench { grid-template-columns: minmax(0, 1fr); grid-template-areas: "key" "work" "map" "spec"; }
+  .key-card { position: static; }
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+h2 {
+  font: 600 12.5px/1.3 var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+h3 { margin: 0; font: 700 17px/1.3 var(--font-display); letter-spacing: -0.01em; }
+
+/* Segmented controls */
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  max-width: 100%;
+}
+.seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 600 14px/1 var(--font-body);
+  padding: 9px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button:hover { color: var(--ink); }
+.seg button[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgb(0 0 0 / 0.12);
+}
+.key-card .seg { display: flex; }
+.key-card .seg button { flex: 1; }
+.work-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* Fields */
+.field { display: grid; gap: 6px; }
+label, .label { font-weight: 600; font-size: 14px; }
+input[type="password"], input[type="text"], textarea {
+  width: 100%;
+  font: 15px/1.5 var(--font-mono);
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+input:focus, textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+textarea { resize: vertical; min-height: 140px; overflow-wrap: anywhere; }
+#rawkey { min-height: 76px; letter-spacing: 0.03em; }
+#output { min-height: 150px; }
+.field-row { display: flex; gap: 8px; }
+.field-row input { flex: 1; min-width: 0; }
+.hint { margin: 0; font-size: 14px; color: var(--muted); }
+.hint.ok { color: var(--ok); }
+.hint.warn { color: var(--warn); }
+.hint.err { color: var(--bad); }
+.caution {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border-radius: 0 6px 6px 0;
+}
+.meter { height: 6px; background: var(--field); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: var(--bad); transition: width 0.25s ease, background-color 0.25s ease; }
+
+/* Buttons */
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 14px/1 var(--font-body);
+  padding: 10px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  padding: 13px 22px;
+  font-size: 15px;
+}
+.btn.primary:hover { filter: brightness(1.07); }
+.btn:disabled { opacity: 0.6; cursor: progress; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.action-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.kbd { font: 13px var(--font-mono); color: var(--muted); }
+.kbd kbd { font: inherit; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; background: var(--field); }
+
+/* Drop zone */
+.drop {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+  gap: 6px;
+  min-height: 170px;
+  padding: 24px;
+  border: 1.5px dashed var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.drop:hover, .drop.over { border-color: var(--accent); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop-main { font-weight: 700; font-size: 16px; }
+.drop-sub { font-size: 14px; color: var(--muted); max-width: 52ch; }
+
+/* Status and output */
+.status { margin: 0; font-size: 15px; color: var(--muted); }
+.status:empty { display: none; }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--bad); }
+.status.busy { color: var(--muted); }
+.out { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 16px; }
+.out-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.meta { font: 13px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+}
+.file-chip .glyph {
+  flex: none;
+  width: 34px; height: 40px;
+  border-radius: 3px;
+  background: var(--seg-ct);
+  background-image: repeating-linear-gradient(90deg, transparent 0 3px, rgb(255 255 255 / 0.14) 3px 4px);
+  border-top-right-radius: 10px;
+}
+.file-chip strong { display: block; font-family: var(--font-mono); font-weight: 600; overflow-wrap: anywhere; }
+.file-chip span { font: 13px var(--font-mono); color: var(--muted); }
+
+/* Envelope map */
+.map-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.map-sum { margin: 0; font: 13.5px/1.5 var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.map-sum b { font-weight: 600; }
+.strip { display: flex; gap: 2px; height: 46px; }
+.strip i {
+  display: block;
+  min-width: 5px;
+  border-radius: 3px;
+  transition: flex-grow 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.k-hdr { background: var(--seg-hdr); }
+.k-kdf { background: var(--seg-kdf); }
+.k-iv { background: var(--seg-iv); }
+.k-ct { background: var(--seg-ct); background-image: repeating-linear-gradient(90deg, transparent 0 3px, rgb(255 255 255 / 0.13) 3px 4px); }
+.k-tag { background: var(--seg-tag); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th {
+  text-align: left;
+  font: 600 12px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 6px 12px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.name { white-space: nowrap; font-weight: 600; }
+td.val { font: 13px/1.5 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; min-width: 18ch; }
+
+/* Spec */
+.spec-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 32px; }
+dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 12px 18px; font-size: 15px; }
+dt { font-weight: 700; }
+dd { margin: 0; color: var(--muted); max-width: 62ch; }
+.code-block { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.code-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+pre {
+  margin: 0;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font: 13px/1.6 var(--font-mono);
+  color: var(--ink);
+  tab-size: 4;
+}
+@media (max-width: 860px) {
+  .spec-grid { grid-template-columns: minmax(0, 1fr); }
+  dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  dd { margin-bottom: 12px; }
+}
+footer { padding: 0 0 40px; color: var(--muted); font-size: 14px; }
+footer p { margin: 0; max-width: 80ch; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>AES-<span class="bits">256</span> Encrypt &amp; Decrypt</h1>
+    <p class="lede">Lock text or files with a passphrase or a 256-bit key, and unlock them again. Everything happens inside this browser tab: nothing you type or drop here is uploaded or stored.</p>
+    <ul class="chips" aria-label="Algorithms">
+      <li>AES-256-GCM</li>
+      <li>PBKDF2-SHA256 × 600,000</li>
+      <li>12-byte random nonce</li>
+      <li>128-bit auth tag</li>
+    </ul>
+  </div>
+</header>
+
+<main class="wrap bench">
+  <section class="card key-card" aria-labelledby="key-h">
+    <h2 id="key-h">Key</h2>
+    <div class="seg" role="radiogroup" aria-label="Key type">
+      <button type="button" id="km-pass" role="radio" aria-checked="true" data-km="pass">Passphrase</button>
+      <button type="button" id="km-raw" role="radio" aria-checked="false" data-km="raw">256-bit key</button>
+    </div>
+
+    <div id="pane-pass" class="field">
+      <label for="pass">Passphrase</label>
+      <div class="field-row">
+        <input id="pass" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Four or more random words">
+        <button type="button" class="btn" id="pass-toggle" aria-controls="pass" aria-pressed="false">Show</button>
+      </div>
+      <div class="meter" aria-hidden="true"><span id="meter-bar"></span></div>
+      <p class="hint" id="pass-hint">Strength appears as you type.</p>
+    </div>
+
+    <div id="pane-raw" class="field" hidden>
+      <label for="rawkey">Key: 64 hex or 44 base64 characters</label>
+      <textarea id="rawkey" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Paste a key, or generate a new one"></textarea>
+      <div class="btn-row">
+        <button type="button" class="btn" id="gen-key">Generate random key</button>
+        <button type="button" class="btn" id="copy-key">Copy key</button>
+      </div>
+      <p class="hint" id="raw-hint">Paste an existing key, or generate a new one.</p>
+    </div>
+
+    <p class="caution">There is no recovery. If the passphrase or key is lost, nobody can decrypt the data.</p>
+  </section>
+
+  <section class="card work-card" aria-labelledby="work-h">
+    <h2 id="work-h" class="sr-only">Workspace</h2>
+    <div class="work-head">
+      <div class="seg" role="radiogroup" aria-label="Operation">
+        <button type="button" id="op-enc" role="radio" aria-checked="true" data-op="enc">Encrypt</button>
+        <button type="button" id="op-dec" role="radio" aria-checked="false" data-op="dec">Decrypt</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Input type">
+        <button type="button" id="src-text" role="radio" aria-checked="true" data-src="text">Text</button>
+        <button type="button" id="src-file" role="radio" aria-checked="false" data-src="file">File</button>
+      </div>
+    </div>
+
+    <div id="in-text" class="field">
+      <label for="input" id="input-label">Text to encrypt</label>
+      <textarea id="input" rows="8" spellcheck="false" placeholder="Type or paste the text you want to protect."></textarea>
+    </div>
+
+    <div id="in-file" hidden>
+      <label class="drop" id="drop" for="file">
+        <input id="file" type="file" class="sr-only">
+        <span class="drop-main" id="drop-main">Drop a file to encrypt, or click to choose one</span>
+        <span class="drop-sub" id="drop-sub">Any file type.</span>
+      </label>
+    </div>
+
+    <div class="action-row">
+      <button type="button" class="btn primary" id="run">Encrypt text</button>
+      <span class="kbd"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <div id="out" class="out" hidden>
+      <div class="out-head">
+        <h3 id="out-title">Encrypted text</h3>
+        <span class="meta" id="out-meta"></span>
+      </div>
+      <label for="output" class="sr-only">Result</label>
+      <textarea id="output" rows="7" readonly spellcheck="false"></textarea>
+      <div id="out-file" class="file-chip" hidden>
+        <span class="glyph" aria-hidden="true"></span>
+        <div><strong id="of-name"></strong><span id="of-size"></span></div>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn" id="copy-out">Copy</button>
+        <button type="button" class="btn" id="save-out">Save as .txt</button>
+        <button type="button" class="btn" id="to-decrypt">Send to Decrypt</button>
+      </div>
+      <p class="hint" id="save-hint"></p>
+    </div>
+  </section>
+
+  <section class="card map-card" aria-labelledby="map-h">
+    <div class="map-head">
+      <h2 id="map-h">Envelope, byte by byte</h2>
+      <p class="hint" id="map-caption"></p>
+    </div>
+    <p class="map-sum" id="map-sum"></p>
+    <div class="strip" id="strip" aria-hidden="true"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Field</th><th scope="col" class="num">Bytes</th><th scope="col">Value</th></tr></thead>
+        <tbody id="seg-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card spec-card" aria-labelledby="spec-h">
+    <h2 id="spec-h">How it works</h2>
+    <div class="spec-grid">
+      <dl>
+        <dt>Cipher</dt>
+        <dd>AES with a 256-bit key in GCM mode. GCM encrypts and adds a 16-byte authentication tag, so a wrong key or any altered byte is rejected instead of producing garbage.</dd>
+        <dt>Passphrase</dt>
+        <dd>Turned into a 256-bit key with PBKDF2-HMAC-SHA256, 600,000 iterations and a fresh 16-byte random salt per message. Text is Unicode-normalized (NFC) first, so accented characters typed on different keyboards give the same key.</dd>
+        <dt>256-bit key</dt>
+        <dd>32 bytes from the browser's secure random generator, used directly. Faster than a passphrase and impossible to guess, but you must store it.</dd>
+        <dt>Nonce</dt>
+        <dd>12 fresh random bytes per message, so encrypting the same text twice gives different output.</dd>
+        <dt>Header</dt>
+        <dd>Format marker, flags, salt and nonce are authenticated together with the ciphertext (GCM additional data), so none of them can be edited.</dd>
+        <dt>Files</dt>
+        <dd>The original file name is encrypted along with the contents. Results save as base64 text (.aes.txt), which survives email and chat apps.</dd>
+      </dl>
+      <div class="code-block">
+        <div class="code-head">
+          <h3>Decrypt outside the browser</h3>
+          <button type="button" class="btn" id="copy-py">Copy Python</button>
+        </div>
+<pre id="py"><code># pip install cryptography
+import base64, hashlib, struct, unicodedata
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+def a256_open(text, passphrase=None, key=None):
+    """Text in, text out. Files return (name, bytes).
+    key: 32 bytes, e.g. bytes.fromhex("...")"""
+    b64 = "".join(l.strip() for l in text.splitlines()
+                  if not l.strip().startswith("-----"))
+    blob = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+    if blob[:4] != b"A256" or blob[4] != 1:
+        raise ValueError("not an A256 v1 message")
+    flags, p = blob[5], 6
+    if flags &amp; 1:  # passphrase-derived key
+        iters = struct.unpack("&gt;I", blob[p:p + 4])[0]
+        salt = blob[p + 4:p + 20]
+        p += 20
+        pw = unicodedata.normalize("NFC", passphrase).encode()
+        key = hashlib.pbkdf2_hmac("sha256", pw, salt, iters, 32)
+    iv = blob[p:p + 12]
+    p += 12
+    # header bytes are the GCM additional data
+    plain = AESGCM(key).decrypt(iv, blob[p:], blob[:p])
+    if flags &amp; 2:  # file: 2-byte name length, name, contents
+        n = struct.unpack("&gt;H", plain[:2])[0]
+        return plain[2:2 + n].decode(), plain[2 + n:]
+    return plain.decode()</code></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Format A256 v1, built on the browser's Web Crypto API with no third-party crypto code. Closing this tab clears the passphrase, key and text.</p>
+</footer>
+
+<script>
+"use strict";
+/* CORE-START */
+const A256 = (() => {
+  const MAGIC = Uint8Array.of(0x41, 0x32, 0x35, 0x36); // "A256"
+  const VERSION = 1;
+  const FLAG_PASS = 1, FLAG_FILE = 2;
+  const PBKDF2_ITERS = 600000, MAX_ITERS = 10000000;
+  const SALT_LEN = 16, IV_LEN = 12, TAG_LEN = 16;
+  const te = new TextEncoder();
+
+  class UserError extends Error {}
+  class KeyNeeded extends UserError {
+    constructor(need, message) { super(message); this.need = need; }
+  }
+
+  const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+  function concat(...parts) {
+    let len = 0;
+    for (const p of parts) len += p.length;
+    const out = new Uint8Array(len);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+  function u32(n) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, false); return b; }
+  function u16(n) { return Uint8Array.of((n >>> 8) & 0xff, n & 0xff); }
+
+  const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
+  function toHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += HEX[b[i]]; return s; }
+  function fromHex(s) {
+    const out = new Uint8Array(s.length >> 1);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  function toB64(bytes) {
+    const parts = [];
+    const CH = 3 * 8192;
+    for (let i = 0; i < bytes.length; i += CH) {
+      parts.push(btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + CH))));
+    }
+    return parts.join("");
+  }
+  function fromB64(str) {
+    let s = String(str)
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith("-----"))
+      .join("")
+      .replace(/\s+/g, "")
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    if (!s) throw new UserError("Paste the encrypted text first.");
+    if (/[^A-Za-z0-9+/=]/.test(s) || /=[^=]/.test(s)) {
+      throw new UserError("That isn't base64 text. Check that the whole encrypted message was copied, with nothing added.");
+    }
+    s = s.replace(/=+$/, "");
+    if (s.length % 4 === 1) throw new UserError("The encrypted text is incomplete. It looks cut off at the end.");
+    s += "===".slice((s.length + 3) % 4);
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function armor(b64, label) {
+    const lines = [];
+    for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
+    return "-----BEGIN " + label + "-----\n" + lines.join("\n") + "\n-----END " + label + "-----\n";
+  }
+
+  function parseRawKey(str) {
+    const s = String(str || "").replace(/\s+/g, "");
+    if (!s) return { ok: false, empty: true, msg: "" };
+    const isHex = /^[0-9a-fA-F]+$/.test(s);
+    if (isHex && s.length === 64) return { ok: true, bytes: fromHex(s), fmt: "hex" };
+    if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(s)) {
+      try {
+        const b = fromB64(s);
+        if (b.length === 32) return { ok: true, bytes: b, fmt: "base64" };
+        if (!isHex) return { ok: false, msg: "This decodes to " + b.length + " bytes. A 256-bit key is exactly 32 bytes." };
+      } catch (e) { /* fall through */ }
+    }
+    if (isHex) return { ok: false, msg: s.length + " hex characters. A 256-bit key is exactly 64." };
+    return { ok: false, msg: "Not a valid key. Use 64 hex characters or 44 base64 characters." };
+  }
+  const randomKeyHex = () => toHex(rand(32));
+
+  async function deriveKey(pass, salt, iterations) {
+    const base = await crypto.subtle.importKey("raw", te.encode(String(pass).normalize("NFC")), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+      base,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  }
+  function importRaw(bytes) {
+    return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  }
+
+  // Envelope: "A256" | version | flags | [iterations u32 | salt 16] | iv 12 | ciphertext | tag 16
+  // Everything before the ciphertext is GCM additional data.
+  async function seal(payload, opts) {
+    const usePass = typeof opts.pass === "string";
+    const flags = (usePass ? FLAG_PASS : 0) | (opts.isFile ? FLAG_FILE : 0);
+    const parts = [MAGIC, Uint8Array.of(VERSION, flags)];
+    const t0 = performance.now();
+    let key;
+    if (usePass) {
+      if (!opts.pass) throw new UserError("Enter a passphrase in the Key panel.");
+      const iters = opts.iterations || PBKDF2_ITERS;
+      const salt = rand(SALT_LEN);
+      parts.push(u32(iters), salt);
+      key = await deriveKey(opts.pass, salt, iters);
+    } else {
+      if (!opts.rawKey || opts.rawKey.length !== 32) throw new UserError("Enter a valid 256-bit key in the Key panel.");
+      key = await importRaw(opts.rawKey);
+    }
+    const kdfMs = performance.now() - t0;
+    const iv = rand(IV_LEN);
+    parts.push(iv);
+    const header = concat(...parts);
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: header, tagLength: 128 }, key, payload);
+    return { bytes: concat(header, new Uint8Array(ct)), kdfMs };
+  }
+
+  function parseEnvelope(bytes) {
+    if (bytes.length < 6 || MAGIC.some((m, i) => bytes[i] !== m)) {
+      throw new UserError("This isn't something this page encrypted: the A256 header is missing. Check that the whole message was copied.");
+    }
+    if (bytes[4] !== VERSION) throw new UserError("Unsupported format version " + bytes[4] + ".");
+    const flags = bytes[5];
+    if (flags & ~(FLAG_PASS | FLAG_FILE)) throw new UserError("Unknown format flags. The message may be damaged.");
+    let p = 6, iters = null, salt = null;
+    if (flags & FLAG_PASS) {
+      if (bytes.length < p + 4 + SALT_LEN) throw new UserError("The encrypted data is too short. It may have been cut off when copied.");
+      iters = new DataView(bytes.buffer, bytes.byteOffset + p, 4).getUint32(0, false);
+      if (iters < 1 || iters > MAX_ITERS) throw new UserError("The iteration count in this message is out of range, so it was rejected.");
+      salt = bytes.slice(p + 4, p + 4 + SALT_LEN);
+      p += 4 + SALT_LEN;
+    }
+    if (bytes.length < p + IV_LEN + TAG_LEN) throw new UserError("The encrypted data is too short. It may have been cut off when copied.");
+    const iv = bytes.slice(p, p + IV_LEN);
+    p += IV_LEN;
+    return { flags, iters, salt, iv, header: bytes.subarray(0, p), body: bytes.subarray(p) };
+  }
+
+  async function open(bytes, keys) {
+    const env = parseEnvelope(bytes);
+    const t0 = performance.now();
+    let key;
+    if (env.flags & FLAG_PASS) {
+      if (!keys.pass) throw new KeyNeeded("pass", "This message was locked with a passphrase. Enter it in the Key panel, then decrypt again.");
+      key = await deriveKey(keys.pass, env.salt, env.iters);
+    } else {
+      if (!keys.rawKey) throw new KeyNeeded("raw", "This message was locked with a 256-bit key. Paste the key in the Key panel, then decrypt again.");
+      key = await importRaw(keys.rawKey);
+    }
+    const kdfMs = performance.now() - t0;
+    let pt;
+    try {
+      pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: env.iv, additionalData: env.header, tagLength: 128 }, key, env.body);
+    } catch (e) {
+      throw new UserError((env.flags & FLAG_PASS ? "Wrong passphrase" : "Wrong key") +
+        ", or the encrypted text was changed. AES-GCM checks integrity, so nothing was decrypted.");
+    }
+    return { env, plaintext: new Uint8Array(pt), kdfMs };
+  }
+
+  function packFile(name, data) {
+    const chars = Array.from(String(name || "file"));
+    let nb = te.encode(chars.join(""));
+    while (nb.length > 255) { chars.pop(); nb = te.encode(chars.join("")); }
+    return concat(u16(nb.length), nb, data);
+  }
+  function unpackFile(pt) {
+    if (pt.length < 2) throw new UserError("The decrypted file data is malformed.");
+    const n = (pt[0] << 8) | pt[1];
+    if (2 + n > pt.length) throw new UserError("The decrypted file data is malformed.");
+    return { name: new TextDecoder().decode(pt.subarray(2, 2 + n)), data: pt.subarray(2 + n) };
+  }
+
+  // Single-file ZIP (stored, no compression) for file types the viewer can't save directly.
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(b) {
+    let c = 0xffffffff;
+    for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  function zipOne(name, data, date) {
+    const d = date || new Date();
+    const nb = te.encode(name);
+    const crc = crc32(data);
+    const size = data.length;
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const day = ((Math.max(d.getFullYear(), 1980) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const local = new Uint8Array(30 + nb.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true);
+    lv.setUint16(8, 0, true); lv.setUint16(10, time, true); lv.setUint16(12, day, true);
+    lv.setUint32(14, crc, true); lv.setUint32(18, size, true); lv.setUint32(22, size, true);
+    lv.setUint16(26, nb.length, true); lv.setUint16(28, 0, true);
+    local.set(nb, 30);
+    const central = new Uint8Array(46 + nb.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true); cv.setUint16(12, time, true);
+    cv.setUint16(14, day, true); cv.setUint32(16, crc, true); cv.setUint32(20, size, true);
+    cv.setUint32(24, size, true); cv.setUint16(28, nb.length, true);
+    cv.setUint32(42, 0, true);
+    central.set(nb, 46);
+    const end = new Uint8Array(22);
+    const ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, 1, true); ev.setUint16(10, 1, true);
+    ev.setUint32(12, central.length, true); ev.setUint32(16, local.length + size, true);
+    return new Blob([local, data, central, end]);
+  }
+
+  return {
+    seal, open, parseEnvelope, packFile, unpackFile, toB64, fromB64, armor, toHex,
+    parseRawKey, randomKeyHex, zipOne, crc32, UserError, KeyNeeded,
+    FLAG_PASS, FLAG_FILE, PBKDF2_ITERS, TAG_LEN
+  };
+})();
+/* CORE-END */
+
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    pass: $("pass"), passToggle: $("pass-toggle"), meterBar: $("meter-bar"), passHint: $("pass-hint"),
+    rawkey: $("rawkey"), genKey: $("gen-key"), copyKey: $("copy-key"), rawHint: $("raw-hint"),
+    panePass: $("pane-pass"), paneRaw: $("pane-raw"),
+    inText: $("in-text"), inFile: $("in-file"), input: $("input"), inputLabel: $("input-label"),
+    drop: $("drop"), file: $("file"), dropMain: $("drop-main"), dropSub: $("drop-sub"),
+    run: $("run"), status: $("status"),
+    out: $("out"), outTitle: $("out-title"), outMeta: $("out-meta"), output: $("output"),
+    outFile: $("out-file"), ofName: $("of-name"), ofSize: $("of-size"),
+    copyOut: $("copy-out"), saveOut: $("save-out"), toDecrypt: $("to-decrypt"), saveHint: $("save-hint"),
+    strip: $("strip"), segBody: $("seg-body"), mapCaption: $("map-caption"), mapSum: $("map-sum"),
+    copyPy: $("copy-py"), py: $("py")
+  };
+  const state = { keyMode: "pass", op: "enc", src: "text", file: null, out: null, env: null, envKind: null, busy: false, busyLabel: "" };
+  const SAVE_OK = new Set("gif png jpg jpeg webp mp4 webm txt json md docx pptx epub csv ttf html svg pdf xlsx zip fig".split(" "));
+  const te = new TextEncoder();
+
+  const fmtInt = (n) => n.toLocaleString("en-US");
+  function fmtBytes(n) {
+    if (n < 1024) return fmtInt(n) + (n === 1 ? " byte" : " bytes");
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+    return (n / 1073741824).toFixed(2) + " GB";
+  }
+  const fmtSec = (ms) => (ms / 1000).toFixed(ms < 1000 ? 2 : 1) + " s";
+  function setStatus(msg, kind) {
+    els.status.textContent = msg || "";
+    els.status.className = "status" + (kind ? " " + kind : "");
+  }
+  function setHint(el, msg, kind) {
+    el.textContent = msg || "";
+    el.className = "hint" + (kind ? " " + kind : "");
+  }
+
+  /* ---------- view state ---------- */
+  function sync() {
+    for (const [attr, val] of [["km", state.keyMode], ["op", state.op], ["src", state.src]]) {
+      document.querySelectorAll("[data-" + attr + "]").forEach((b) => {
+        const on = b.dataset[attr] === val;
+        b.setAttribute("aria-checked", String(on));
+        b.tabIndex = on ? 0 : -1;
+      });
+    }
+    els.panePass.hidden = state.keyMode !== "pass";
+    els.paneRaw.hidden = state.keyMode !== "raw";
+    els.inText.hidden = state.src !== "text";
+    els.inFile.hidden = state.src !== "file";
+    const enc = state.op === "enc";
+    els.inputLabel.textContent = enc ? "Text to encrypt" : "Encrypted text to decrypt";
+    els.input.placeholder = enc ? "Type or paste the text you want to protect." : "Paste the base64 text that Encrypt produced.";
+    if (state.file) {
+      els.dropMain.textContent = state.file.name;
+      els.dropSub.textContent = fmtBytes(state.file.size) + ". Click or drop to choose a different file.";
+    } else if (enc) {
+      els.dropMain.textContent = "Drop a file to encrypt, or click to choose one";
+      els.dropSub.textContent = "Any file type. The result is a .aes.txt file, and the original name stays inside the encryption.";
+    } else {
+      els.dropMain.textContent = "Drop an .aes.txt file to decrypt, or click to choose one";
+      els.dropSub.textContent = "Use a file that Encrypt on this page produced.";
+    }
+    els.run.textContent = state.busy ? state.busyLabel : (enc ? "Encrypt " : "Decrypt ") + (state.src === "text" ? "text" : "file");
+    els.run.disabled = state.busy;
+    if (!state.env) renderMap(null);
+  }
+  function setKeyMode(m) { state.keyMode = m; sync(); }
+  function setOp(o) { state.op = o; setStatus(""); sync(); }
+  function setSrc(s) { state.src = s; setStatus(""); sync(); }
+
+  document.querySelectorAll(".seg").forEach((group) => {
+    const choose = (b) => {
+      if (b.dataset.km) setKeyMode(b.dataset.km);
+      else if (b.dataset.op) setOp(b.dataset.op);
+      else if (b.dataset.src) setSrc(b.dataset.src);
+    };
+    group.addEventListener("click", (e) => {
+      const b = e.target.closest("button[role=radio]");
+      if (b) choose(b);
+    });
+    group.addEventListener("keydown", (e) => {
+      const dir = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+      if (!dir) return;
+      e.preventDefault();
+      const btns = Array.from(group.querySelectorAll("button[role=radio]"));
+      const next = btns[(btns.indexOf(document.activeElement) + dir + btns.length) % btns.length];
+      next.focus();
+      choose(next);
+    });
+  });
+
+  /* ---------- key panel ---------- */
+  function strength(p) {
+    if (!p) return null;
+    const chars = Array.from(p);
+    let pool = 0;
+    if (/[a-z]/.test(p)) pool += 26;
+    if (/[A-Z]/.test(p)) pool += 26;
+    if (/[0-9]/.test(p)) pool += 10;
+    if (/[\x20-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]/.test(p)) pool += 33;
+    if (/[^\x00-\x7f]/.test(p)) pool += 60;
+    const uniq = new Set(chars).size;
+    const bits = chars.length * Math.log2(Math.max(pool, 2)) * Math.min(1, 0.4 + uniq / chars.length);
+    if (bits < 45) return { bits, label: "Weak", kind: "err", color: "var(--bad)" };
+    if (bits < 65) return { bits, label: "Fair", kind: "warn", color: "var(--warn)" };
+    if (bits < 90) return { bits, label: "Strong", kind: "ok", color: "var(--ok)" };
+    return { bits, label: "Very strong", kind: "ok", color: "var(--ok)" };
+  }
+  function updateStrength() {
+    const s = strength(els.pass.value);
+    if (!s) {
+      els.meterBar.style.width = "0";
+      setHint(els.passHint, "Strength appears as you type.");
+      return;
+    }
+    els.meterBar.style.width = Math.min(100, (s.bits / 128) * 100).toFixed(1) + "%";
+    els.meterBar.style.backgroundColor = s.color;
+    const bits = s.bits >= 128 ? "128+" : String(Math.round(s.bits));
+    setHint(els.passHint, s.label + ", about " + bits + " bits (rough estimate)." +
+      (s.bits < 65 ? " Longer is stronger: four or more random words work well." : ""), s.kind);
+  }
+  els.pass.addEventListener("input", updateStrength);
+  els.passToggle.addEventListener("click", () => {
+    const show = els.pass.type === "password";
+    els.pass.type = show ? "text" : "password";
+    els.passToggle.textContent = show ? "Hide" : "Show";
+    els.passToggle.setAttribute("aria-pressed", String(show));
+  });
+
+  function updateRawHint() {
+    const r = A256.parseRawKey(els.rawkey.value);
+    if (r.empty) setHint(els.rawHint, "Paste an existing key, or generate a new one.");
+    else if (r.ok) setHint(els.rawHint, "Valid 256-bit key (" + r.fmt + "). Anyone who has it can decrypt, so keep it private.", "ok");
+    else setHint(els.rawHint, r.msg, "err");
+  }
+  els.rawkey.addEventListener("input", updateRawHint);
+  els.genKey.addEventListener("click", () => {
+    els.rawkey.value = A256.randomKeyHex();
+    updateRawHint();
+    setHint(els.rawHint, "New random 256-bit key. Copy it somewhere safe before you encrypt with it.", "ok");
+  });
+  els.copyKey.addEventListener("click", () => {
+    const r = A256.parseRawKey(els.rawkey.value);
+    if (!r.ok) { setHint(els.rawHint, r.empty ? "There's no key to copy yet." : r.msg, "err"); return; }
+    copyText(els.rawkey.value.replace(/\s+/g, ""), els.copyKey);
+  });
+
+  /* ---------- file input ---------- */
+  function setFile(f) {
+    state.file = { name: f.name, size: f.size, read: async () => new Uint8Array(await f.arrayBuffer()) };
+    state.src = "file";
+    let note = "";
+    if (state.op === "enc" && /\.aes\.txt$/i.test(f.name)) {
+      state.op = "dec";
+      note = "Switched to Decrypt because this looks like an encrypted file.";
+    }
+    sync();
+    setStatus(note);
+  }
+  els.file.addEventListener("change", () => {
+    if (els.file.files && els.file.files[0]) setFile(els.file.files[0]);
+    els.file.value = "";
+  });
+  els.drop.addEventListener("dragover", (e) => { e.preventDefault(); els.drop.classList.add("over"); });
+  els.drop.addEventListener("dragleave", () => els.drop.classList.remove("over"));
+  els.drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    els.drop.classList.remove("over");
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+
+  /* ---------- run ---------- */
+  function keysForDecrypt() {
+    const r = A256.parseRawKey(els.rawkey.value);
+    return { pass: els.pass.value || null, rawKey: r.ok ? r.bytes : null };
+  }
+  function keysForEncrypt() {
+    if (state.keyMode === "pass") {
+      if (!els.pass.value) { els.pass.focus(); throw new A256.UserError("Enter a passphrase in the Key panel first."); }
+      return { pass: els.pass.value };
+    }
+    const r = A256.parseRawKey(els.rawkey.value);
+    if (!r.ok) {
+      els.rawkey.focus();
+      throw new A256.UserError(r.empty ? "Paste a 256-bit key in the Key panel, or generate one." : r.msg);
+    }
+    return { rawKey: r.bytes };
+  }
+  async function envelopeFromFile(u8) {
+    if (u8.length >= 4 && u8[0] === 0x41 && u8[1] === 0x32 && u8[2] === 0x35 && u8[3] === 0x36) return u8;
+    let text;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(u8); }
+    catch (e) { throw new A256.UserError("This file isn't something this page encrypted. Choose the .aes.txt file that Encrypt produced."); }
+    return A256.fromB64(text);
+  }
+  function busy(label) { state.busy = true; state.busyLabel = label; sync(); }
+
+  async function run() {
+    if (state.busy) return;
+    setStatus("");
+    const enc = state.op === "enc";
+    try {
+      if (enc) {
+        const keys = keysForEncrypt();
+        let payload, isFile = false, inputSize, fileName;
+        if (state.src === "text") {
+          if (!els.input.value) { els.input.focus(); throw new A256.UserError("Type or paste the text to encrypt."); }
+          payload = te.encode(els.input.value);
+          inputSize = payload.length;
+        } else {
+          if (!state.file) throw new A256.UserError("Choose a file to encrypt first.");
+          busy("Reading file…");
+          const data = await state.file.read();
+          fileName = state.file.name;
+          inputSize = data.length;
+          payload = A256.packFile(fileName, data);
+          isFile = true;
+        }
+        busy(keys.pass ? "Deriving key…" : "Encrypting…");
+        const { bytes, kdfMs } = await A256.seal(payload, { ...keys, isFile });
+        const b64 = A256.toB64(bytes);
+        state.env = A256.parseEnvelope(bytes);
+        state.envKind = "enc";
+        const kdfNote = keys.pass ? " Key derived in " + fmtSec(kdfMs) + "." : "";
+        if (!isFile) {
+          showOut({
+            kind: "text", encrypted: true, title: "Encrypted text", text: b64,
+            meta: fmtInt(b64.length) + " characters",
+            filename: "encrypted-message.aes.txt",
+            data: A256.armor(b64, "AES-256-GCM ENCRYPTED MESSAGE")
+          });
+          setStatus("Encrypted " + fmtBytes(inputSize) + " of text." + kdfNote, "ok");
+        } else {
+          const armored = A256.armor(b64, "AES-256-GCM ENCRYPTED FILE");
+          showOut({
+            kind: "file", encrypted: true, title: "Encrypted file",
+            filename: fileName + ".aes.txt", data: armored, size: armored.length,
+            meta: "base64 text"
+          });
+          setStatus("Encrypted " + fileName + " (" + fmtBytes(inputSize) + ")." + kdfNote, "ok");
+        }
+        renderMap(state.env, { b64Len: b64.length });
+      } else {
+        let bytes;
+        if (state.src === "text") {
+          bytes = A256.fromB64(els.input.value);
+        } else {
+          if (!state.file) throw new A256.UserError("Choose a file to decrypt first.");
+          busy("Reading file…");
+          bytes = await envelopeFromFile(await state.file.read());
+        }
+        const env0 = A256.parseEnvelope(bytes);
+        busy(env0.flags & A256.FLAG_PASS ? "Deriving key…" : "Decrypting…");
+        let result;
+        try {
+          result = await A256.open(bytes, keysForDecrypt());
+        } catch (e) {
+          if (e instanceof A256.KeyNeeded) {
+            state.keyMode = e.need;
+            sync();
+            (e.need === "pass" ? els.pass : els.rawkey).focus();
+          }
+          throw e;
+        }
+        const { env, plaintext, kdfMs } = result;
+        state.keyMode = env.flags & A256.FLAG_PASS ? "pass" : "raw";
+        state.env = env;
+        state.envKind = "dec";
+        const kdfNote = env.flags & A256.FLAG_PASS ? " Key derived in " + fmtSec(kdfMs) + "." : "";
+        if (env.flags & A256.FLAG_FILE) {
+          const { name, data } = A256.unpackFile(plaintext);
+          const safe = safeName(name);
+          showOut({ kind: "file", encrypted: false, title: "Decrypted file", filename: safe, data, size: data.length, meta: "original file" });
+          setStatus("Decrypted " + safe + " (" + fmtBytes(data.length) + "). Integrity check passed." + kdfNote, "ok");
+        } else {
+          const text = new TextDecoder().decode(plaintext);
+          showOut({
+            kind: "text", encrypted: false, title: "Decrypted text", text,
+            meta: fmtBytes(plaintext.length), filename: "decrypted-message.txt", data: text
+          });
+          setStatus("Decrypted " + fmtBytes(plaintext.length) + " of text. Integrity check passed." + kdfNote, "ok");
+        }
+        renderMap(env, { b64Len: null });
+      }
+    } catch (e) {
+      const msg = e instanceof A256.UserError ? e.message : "Something went wrong: " + (e && e.message ? e.message : String(e));
+      setStatus(msg, "err");
+    } finally {
+      state.busy = false;
+      sync();
+    }
+  }
+  els.run.addEventListener("click", run);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); }
+  });
+
+  function safeName(name) {
+    const s = String(name || "").replace(/[\/\\:*?"<>|\u0000-\u001f]/g, "_").replace(/^\.+/, "").trim();
+    return s || "decrypted-file";
+  }
+
+  /* ---------- output ---------- */
+  function showOut(o) {
+    state.out = o;
+    els.out.hidden = false;
+    els.outTitle.textContent = o.title;
+    els.outMeta.textContent = o.meta || "";
+    const isText = o.kind === "text";
+    els.output.hidden = !isText;
+    els.outFile.hidden = isText;
+    els.copyOut.hidden = !isText;
+    if (isText) {
+      els.output.value = o.text;
+    } else {
+      els.output.value = "";
+      els.ofName.textContent = o.filename;
+      els.ofSize.textContent = fmtBytes(o.size);
+    }
+    els.saveOut.textContent = isText ? "Save as .txt" : "Save file";
+    els.toDecrypt.hidden = !o.encrypted;
+    setHint(els.saveHint, "");
+  }
+  els.copyOut.addEventListener("click", () => { if (state.out && state.out.kind === "text") copyText(state.out.text, els.copyOut); });
+  els.toDecrypt.addEventListener("click", () => {
+    const o = state.out;
+    if (!o || !o.encrypted) return;
+    if (o.kind === "text") {
+      els.input.value = o.text;
+      state.src = "text";
+    } else {
+      const bytes = te.encode(o.data);
+      state.file = { name: o.filename, size: bytes.length, read: async () => bytes };
+      state.src = "file";
+    }
+    state.op = "dec";
+    els.out.hidden = true;
+    state.out = null;
+    sync();
+    setStatus("Ready to decrypt. The key panel still holds the same key, so this checks the round trip.");
+    els.run.focus();
+  });
+
+  /* ---------- saving ---------- */
+  // Hosted on claude.ai, the page runs in a sandbox and saves through the host's
+  // downloads capability. Anywhere else (GitHub Pages, a local file) it uses a
+  // normal browser download.
+  const inClaude = () => !!(window.claude && typeof window.claude.use === "function");
+  let dlPromise = null;
+  function getHostDownloads() {
+    if (!inClaude()) return Promise.resolve(null);
+    if (!dlPromise) dlPromise = window.claude.use("downloads").catch(() => null);
+    return dlPromise;
+  }
+  window.addEventListener("load", () => { setTimeout(getHostDownloads, 0); });
+
+  function browserDownload(filename, data) {
+    const blob = data instanceof Blob ? data
+      : new Blob([data], { type: typeof data === "string" ? "text/plain;charset=utf-8" : "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  els.saveOut.addEventListener("click", async () => {
+    const o = state.out;
+    if (!o) return;
+    if (!inClaude()) {
+      browserDownload(o.filename, o.data);
+      setHint(els.saveHint, "Downloaded " + o.filename + ".", "ok");
+      return;
+    }
+    const dl = await getHostDownloads();
+    if (!dl) {
+      setHint(els.saveHint, "Saving files isn't available in this view." + (o.kind === "text" ? " Use Copy instead." : ""), "err");
+      return;
+    }
+    let filename = o.filename, data = o.data, note = "";
+    const ext = (filename.match(/\.([^.]+)$/) || [, ""])[1].toLowerCase();
+    if (!SAVE_OK.has(ext)) {
+      const bytes = typeof data === "string" ? te.encode(data) : data;
+      data = A256.zipOne(filename, bytes);
+      filename = filename + ".zip";
+      note = " This page can only save common file types, so the file is inside a .zip.";
+    }
+    try {
+      await dl.save({ filename, data });
+      setHint(els.saveHint, "Saved " + filename + "." + note, "ok");
+    } catch (err) {
+      const code = err && err.code;
+      const msgs = {
+        declined: "Save cancelled.",
+        rate_limited: "A save prompt is already open. Finish it, then try again.",
+        too_large: "This file is too large to save from this view.",
+        rejected_extension: "This view can't save ." + ext + " files.",
+        extension_not_enabled: "Saving ." + ext + " files isn't available in this view."
+      };
+      setHint(els.saveHint, msgs[code] || "Saving isn't available in this view right now.", code === "declined" ? "" : "err");
+    }
+  });
+
+  /* ---------- clipboard ---------- */
+  async function copyText(text, btn) {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { /* try the fallback */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch (e) { ok = false; }
+    }
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
+    btn.textContent = ok ? "Copied" : "Copy blocked";
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => { btn.textContent = label; }, 1500);
+    if (!ok) setStatus("Copy was blocked in this view. Select the text and press Ctrl+C (Cmd+C on a Mac).", "err");
+  }
+  els.copyPy.addEventListener("click", () => copyText(els.py.textContent, els.copyPy));
+
+  /* ---------- envelope map ---------- */
+  const groupHex = (b) => A256.toHex(b).replace(/(.{8})(?=.)/g, "$1 ");
+  function preview(b, max) {
+    if (b.length <= max) return groupHex(b);
+    return groupHex(b.subarray(0, max)) + " … +" + fmtInt(b.length - max) + " bytes";
+  }
+  function renderMap(env, meta) {
+    const schematic = !env;
+    const pass = schematic ? state.keyMode === "pass" : !!(env.flags & A256.FLAG_PASS);
+    const isFile = schematic ? state.src === "file" : !!(env.flags & A256.FLAG_FILE);
+    const segs = [];
+    const flagsByte = (pass ? 1 : 0) | (isFile ? 2 : 0);
+    const flagWords = [pass ? "passphrase" : "raw key", isFile ? "file" : "text"].join(", ");
+    segs.push({ k: "hdr", name: "Magic", len: 4, w: 4, val: '41323536 ("A256")' });
+    segs.push({ k: "hdr", name: "Version", len: 1, w: 2, val: "01" });
+    segs.push({ k: "hdr", name: "Flags", len: 1, w: 2, val: "0" + flagsByte + " (" + flagWords + ")" });
+    if (pass) {
+      const iters = schematic ? A256.PBKDF2_ITERS : env.iters;
+      segs.push({ k: "kdf", name: "PBKDF2 iterations", len: 4, w: 4, val: fmtInt(iters) });
+      segs.push({ k: "kdf", name: "Salt", len: 16, w: 16, val: schematic ? "16 random bytes, new for every message" : groupHex(env.salt) });
+    }
+    segs.push({ k: "iv", name: "Nonce (IV)", len: 12, w: 12, val: schematic ? "12 random bytes, new for every message" : groupHex(env.iv) });
+    if (schematic) {
+      segs.push({ k: "ct", name: "Ciphertext", len: null, w: 60, val: isFile ? "Same length as the file, plus its name" : "Same length as your text in UTF-8" });
+      segs.push({ k: "tag", name: "Auth tag", len: 16, w: 16, val: "Fails decryption if any byte above is changed" });
+    } else {
+      const ctLen = env.body.length - A256.TAG_LEN;
+      const ct = env.body.subarray(0, ctLen);
+      const tag = env.body.subarray(ctLen);
+      segs.push({ k: "ct", name: "Ciphertext", len: ctLen, w: Math.min(Math.max(ctLen, 24), 140), val: ctLen ? preview(ct, 24) : "(empty)" });
+      segs.push({ k: "tag", name: "Auth tag", len: 16, w: 16, val: groupHex(tag) });
+    }
+
+    els.strip.innerHTML = "";
+    els.segBody.innerHTML = "";
+    for (const s of segs) {
+      const i = document.createElement("i");
+      i.className = "k-" + s.k;
+      i.style.flexGrow = String(s.w);
+      i.title = s.name + (s.len != null ? ": " + s.len + " bytes" : "");
+      els.strip.appendChild(i);
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.className = "name";
+      const sw = document.createElement("span");
+      sw.className = "sw k-" + s.k;
+      tdName.append(sw, s.name);
+      const tdLen = document.createElement("td");
+      tdLen.className = "num";
+      tdLen.textContent = s.len == null ? "n" : fmtInt(s.len);
+      const tdVal = document.createElement("td");
+      tdVal.className = "val";
+      tdVal.textContent = s.val;
+      tr.append(tdName, tdLen, tdVal);
+      els.segBody.appendChild(tr);
+    }
+
+    const overhead = 6 + (pass ? 20 : 0) + 12 + 16;
+    if (schematic) {
+      els.mapCaption.textContent = "Layout of a " + (pass ? "passphrase" : "key") + "-locked " + (isFile ? "file" : "message") + ". Encrypt something to see your own bytes.";
+      els.mapSum.innerHTML = "";
+      els.mapSum.append(
+        "Fixed overhead ", bold(fmtInt(overhead) + " bytes"),
+        " + ciphertext ", bold("n bytes"),
+        ", sent as base64 (about 4 characters per 3 bytes)."
+      );
+    } else {
+      const total = env.header.length + env.body.length;
+      els.mapCaption.textContent = state.envKind === "enc" ? "The message you just encrypted." : "The message you just decrypted.";
+      els.mapSum.innerHTML = "";
+      els.mapSum.append(
+        "Overhead ", bold(fmtInt(overhead) + " bytes"),
+        " + ciphertext ", bold(fmtInt(env.body.length - A256.TAG_LEN) + " bytes"),
+        " = ", bold(fmtInt(total) + " bytes"),
+        meta && meta.b64Len ? ", or " + fmtInt(meta.b64Len) + " base64 characters." : "."
+      );
+    }
+  }
+  function bold(t) { const b = document.createElement("b"); b.textContent = t; return b; }
+
+  sync();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Test output (sample encrypted files and keys written by the tests)
+tests/out/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
